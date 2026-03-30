@@ -1,0 +1,456 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Demo Registry Application - Register and organize AI/GenAI demos and PoCs
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+  ProjectName:
+    Type: String
+    Default: demo-registry
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        DEMOS_TABLE: !Ref DemosTable
+        FILES_BUCKET: !Ref DemoFilesBucket
+        REGION: !Ref AWS::Region
+
+Resources:
+  # ============ COGNITO ============
+  DemoRegistryUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${ProjectName}-user-pool-${Environment}'
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: false
+        - Name: name
+          Required: true
+          Mutable: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      UserPoolAddOns:
+        AdvancedSecurityMode: ENFORCED
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+  DemoRegistryUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${ProjectName}-web-client'
+      UserPoolId: !Ref DemoRegistryUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      SupportedIdentityProviders:
+        - COGNITO
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 7
+
+  # ============ DYNAMODB ============
+  DemosTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: demoId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: N
+        - AttributeName: industry
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: demoId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: IndustryIndex
+          KeySchema:
+            - AttributeName: industry
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: StatusIndex
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # ============ S3 BUCKETS ============
+  DemoFilesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-files-${AWS::AccountId}-${Environment}'
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: ['https://*.cloudfront.net']
+            AllowedMethods: [GET, PUT]
+            AllowedHeaders: ['*']
+            MaxAge: 3600
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-frontend-${AWS::AccountId}-${Environment}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+  # ============ CLOUDFRONT ============
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${ProjectName}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SecurityHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub '${ProjectName}-security-headers-${Environment}'
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 63072000
+            IncludeSubdomains: true
+            Override: true
+            Preload: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          XSSProtection:
+            ModeBlock: true
+            Override: true
+            Protection: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.amazonaws.com https://*.amazoncognito.com; font-src 'self'"
+            Override: true
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+          ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+
+  # ============ API GATEWAY ============
+  DemoRegistryAPI:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub '${ProjectName}-api-${Environment}'
+      StageName: !Ref Environment
+      Cors:
+        AllowOrigin: "'https://d1459bh5wbttbo.cloudfront.net'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt DemoRegistryUserPool.Arn
+        AddDefaultAuthorizerToCorsPreflight: false
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'https://d1459bh5wbttbo.cloudfront.net'"
+              Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'https://d1459bh5wbttbo.cloudfront.net'"
+              Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingBurstLimit: 50
+          ThrottlingRateLimit: 100
+
+  # ============ LAMBDA FUNCTIONS ============
+  CreateDemoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-create-${Environment}'
+      Handler: index.handler
+      CodeUri: ../lambda/createDemo
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Sub 'https://${CloudFrontDistribution.DomainName}'
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DemosTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DemoRegistryAPI
+            Path: /demos
+            Method: POST
+
+  GetDemoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-get-${Environment}'
+      Handler: index.handler
+      CodeUri: ../lambda/getDemo
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Sub 'https://${CloudFrontDistribution.DomainName}'
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref DemosTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DemoRegistryAPI
+            Path: /demos/{demoId}
+            Method: GET
+
+  ListDemosFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-list-${Environment}'
+      Handler: index.handler
+      CodeUri: ../lambda/listDemos
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Sub 'https://${CloudFrontDistribution.DomainName}'
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref DemosTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DemoRegistryAPI
+            Path: /demos
+            Method: GET
+
+  UpdateDemoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-update-${Environment}'
+      Handler: index.handler
+      CodeUri: ../lambda/updateDemo
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Sub 'https://${CloudFrontDistribution.DomainName}'
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DemosTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DemoRegistryAPI
+            Path: /demos/{demoId}
+            Method: PUT
+
+  DeleteDemoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-delete-${Environment}'
+      Handler: index.handler
+      CodeUri: ../lambda/deleteDemo
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Sub 'https://${CloudFrontDistribution.DomainName}'
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DemosTable
+        - S3CrudPolicy:
+            BucketName: !Ref DemoFilesBucket
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DemoRegistryAPI
+            Path: /demos/{demoId}
+            Method: DELETE
+
+  UploadFileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-upload-${Environment}'
+      Handler: index.handler
+      CodeUri: ../lambda/uploadFile
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Sub 'https://${CloudFrontDistribution.DomainName}'
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref DemoFilesBucket
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DemoRegistryAPI
+            Path: /demos/upload
+            Method: POST
+
+  SearchDemosFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-search-${Environment}'
+      Handler: index.handler
+      CodeUri: ../lambda/searchDemos
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Sub 'https://${CloudFrontDistribution.DomainName}'
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref DemosTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DemoRegistryAPI
+            Path: /demos/search
+            Method: POST
+
+  # ============ OUTPUTS ============
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref DemoRegistryUserPool
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolId'
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref DemoRegistryUserPoolClient
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolClientId'
+
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${DemoRegistryAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiEndpoint'
+
+  CloudFrontURL:
+    Description: CloudFront Distribution URL
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontURL'
+
+  CloudFrontDistributionId:
+    Description: CloudFront Distribution ID
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontDistributionId'
+
+  FilesBucketName:
+    Description: S3 Bucket for demo files
+    Value: !Ref DemoFilesBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-FilesBucket'
+
+  FrontendBucketName:
+    Description: S3 Bucket for frontend
+    Value: !Ref FrontendBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendBucket'

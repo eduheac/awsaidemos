@@ -1,0 +1,8 @@
+node_modules/
+.aws-sam/
+frontend/dist/
+.env
+.env.local
+*.js.map
+.DS_Store
+package-lock.json
