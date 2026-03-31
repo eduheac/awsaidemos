@@ -14,7 +14,7 @@ function LoginPage() {
       </div>
       <div className="w-full lg:w-1/2 flex flex-col items-center justify-center p-8 bg-gray-50">
         <img src="/logo.png" alt="AI PoC & Demo Registry" className="w-64 mb-8 lg:hidden" />
-        <Authenticator />
+        <Authenticator hideSignUp={true} />
       </div>
     </div>
   );
