@@ -5,3 +5,19 @@
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
+
+/* Amplify Authenticator - wider login container */
+[data-amplify-authenticator] {
+  --amplify-components-authenticator-router-box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+  --amplify-components-authenticator-router-border-width: 0;
+}
+
+[data-amplify-authenticator] [data-amplify-router] {
+  max-width: 480px;
+  width: 100%;
+  border-radius: 16px;
+}
+
+[data-amplify-authenticator] [data-amplify-container] {
+  max-width: 520px;
+}

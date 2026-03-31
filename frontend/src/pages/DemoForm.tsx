@@ -9,7 +9,7 @@ const STATUSES: DemoStatus[] = ['concept', 'development', 'validated', 'producti
 const LEVELS: TechnicalLevel[] = ['executive', 'technical', 'developer'];
 const MODALITIES: Modality[] = ['deployable', 'live', 'clickthrough', 'video'];
 const INDUSTRIES = ['Financial Services', 'Healthcare', 'Retail', 'Manufacturing', 'Media', 'Education', 'Public Sector', 'Energy', 'Telecom', 'General'];
-const AWS_SERVICES = ['Amazon Bedrock', 'Amazon SageMaker', 'Amazon Rekognition', 'Amazon Comprehend', 'Amazon Textract', 'Amazon Polly', 'Amazon Transcribe', 'Amazon Kendra', 'Amazon Lex', 'AWS Lambda', 'Amazon DynamoDB', 'Amazon S3', 'Amazon API Gateway', 'Amazon CloudFront', 'Amazon ECS', 'Amazon EKS'];
+const AWS_SERVICES = ['Amazon Bedrock', 'Amazon Bedrock AgentCore', 'Strands Agents', 'Amazon Nova', 'Amazon SageMaker AI', 'Amazon Rekognition', 'Amazon Comprehend', 'Amazon Textract', 'Amazon Polly', 'Amazon Transcribe', 'Amazon Kendra', 'Amazon Lex', 'Amazon Q', 'Amazon Personalize', 'Amazon Forecast', 'AWS Lambda', 'Amazon DynamoDB', 'Amazon S3', 'Amazon API Gateway', 'Amazon CloudFront', 'Amazon ECS', 'Amazon EKS'];
 
 export default function DemoForm() {
   const { demoId } = useParams<{ demoId: string }>();

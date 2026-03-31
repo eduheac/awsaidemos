@@ -19,10 +19,7 @@ export default function Layout({ children, user, signOut }: LayoutProps) {
           <div className="flex justify-between h-16">
             <div className="flex items-center space-x-8">
               <Link to="/" className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">DR</span>
-                </div>
-                <span className="text-xl font-semibold text-gray-900">Demo Registry</span>
+                <img src="/logo.png" alt="AI PoC & Demo Registry" className="h-10" />
               </Link>
               <div className="hidden sm:flex space-x-1">
                 <Link
